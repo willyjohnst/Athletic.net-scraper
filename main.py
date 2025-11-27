@@ -27,8 +27,7 @@ async def run_historical_backfill(start_year, end_year):
             meet_urls = await fetch_season_meets(year, season)
             
             # 2. Processing Phase: Async parsing of meets
-            # We use a Semaphore to limit concurrency (politeness)
-            sem = asyncio.Semaphore(10) # 10 concurrent requests max
+            sem = asyncio.Semaphore(2) 
             
             tasks = []
             for url in meet_urls:

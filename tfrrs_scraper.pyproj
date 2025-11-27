@@ -20,9 +20,9 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="db_connection.py" />
+    <Compile Include="harvester.py" />
     <Compile Include="main.py" />
-    <Compile Include="meet_processer.py" />
-    <Compile Include="xc_parser.py" />
+    <Compile Include="processor.py" />
   </ItemGroup>
   <Import Project="$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)\Python Tools\Microsoft.PythonTools.targets" />
 </Project>
