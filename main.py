@@ -1,60 +1,73 @@
 import asyncio
 import logging
+import argparse
 from scrapers.harvester import fetch_season_meets
+from scrapers.processor import process_single_meet
+from scrapers.team_scraper import TeamScraper
 from db_connection import Database
 
-# Configure logging to catch missed scrapes
-logging.basicConfig(filename='scraper.log', level=logging.INFO, 
-                    format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    filename='scraper.log', 
+    level=logging.INFO, 
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 
-async def run_historical_backfill(start_year, end_year):
-    """
-    Orchestrates the yearly scrape.
-    This is the "Hybrid Archival-Meet Traversal Strategy".
-    """
+async def run_scraper(start_year, end_year, modes):
     db = Database()
     await db.connect()
-
-    seasons = ["xc", "indoor", "outdoor"]
     
     for year in range(start_year, end_year + 1):
-        print(f"--- Starting Archive Scrape for {year} ---")
-        
-        for season in seasons:
-            # 1. Discovery Phase: Find all Meet URLs for this season
-            # We await this because we need the list before we can process them
-            print(f"Fetching {season} meet list for {year}...")
-            meet_urls = await fetch_season_meets(year, season)
+        for mode in modes:
+            print(f"--- Starting Scrape: {year} [{mode.upper()}] ---")
             
-            # 2. Processing Phase: Async parsing of meets
-            sem = asyncio.Semaphore(2) 
+            # 1. Harvest
+            meet_urls = await fetch_season_meets(year, mode)
+            print(f"Found {len(meet_urls)} meets.")
             
+            # 2. Process
+            sem = asyncio.Semaphore(2)
             tasks = []
             for url in meet_urls:
-                task = asyncio.create_task(process_meet_safe(sem, db, url, season))
+                task = asyncio.create_task(bounded_process(sem, db, url, mode))
                 tasks.append(task)
             
-            # Wait for all meets in this season to finish before moving to next
             await asyncio.gather(*tasks)
-            print(f"Completed {season} {year}")
+            print(f"Completed {year} {mode}")
 
     await db.close()
 
+async def run_team_backfill():
+    """Runs the specialized Team Scraper."""
+    print("--- Starting Team Info Backfill ---")
+    db = Database()
+    await db.connect()
+    
+    scraper = TeamScraper(db)
+    await scraper.backfill_teams()
+    
+    await db.close()
+    print("--- Team Backfill Complete ---")
 
-
-
-async def process_meet_safe(sem, db, url, season):
-    """
-    Wrapper to handle errors gracefully without crashing the main loop.
-    """
+async def bounded_process(sem, db, url, season):
     async with sem:
         try:
-            from scrapers.processor import process_single_meet
             await process_single_meet(db, url, season)
         except Exception as e:
-            logging.error(f"FAILED TO PROCESS MEET {url}: {str(e)}")
+            logging.error(f"Failed to process {url}: {e}")
             print(f"X Failed: {url}")
 
 if __name__ == "__main__":
-    # Example: Scrape the 2023 season
-    asyncio.run(run_historical_backfill(2023, 2023))
+    parser = argparse.ArgumentParser(description="TFRRS Scraper")
+    parser.add_argument("--start", type=int, default=2024, help="Start Year")
+    parser.add_argument("--end", type=int, default=2024, help="End Year")
+    parser.add_argument("--mode", type=str, default="track,xc", help="Comma-sep modes: track,xc")
+    parser.add_argument("--teams", action="store_true", help="Run Team Info Backfill ONLY")
+    
+    args = parser.parse_args()
+    
+    if args.teams:
+        asyncio.run(run_team_backfill())
+
+    else:
+        modes = args.mode.split(",")
+        asyncio.run(run_scraper(args.start, args.end, modes))

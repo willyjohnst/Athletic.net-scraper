@@ -34,11 +34,7 @@ async def fetch_season_meets(year, sport):
     # Even if there are >30 meets in a month, the pagination loop handles it.
     # 1-12 covers the whole year (Indoor + Outdoor + XC)    
     async with httpx.AsyncClient(headers=HEADERS, follow_redirects=True) as client:
-        if sport in {'indoor', 'outdoor'}:
-            months = {1, 2, 3, 4, 5, 6, 7, 11, 12}
-        else:
-            months = {8, 9, 10, 11}
-
+        months = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}
         for month in months:
             print(f"  > Scanning {sport} for {year}-{month:02d}...")
             
