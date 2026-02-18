@@ -1,134 +1,142 @@
 import httpx
-from lxml import html
 import asyncio
 import logging
-import traceback
+import calendar
+from datetime import date, datetime
 
-# Base URL for the search form action found in your doc
-SEARCH_URL = "https://www.tfrrs.org/results_search_page.html"   
+# Constants for Athletic.net API
+MAIN_SITE_BASE = "https://www.athletic.net"
+API_REGIONS = f"{MAIN_SITE_BASE}/api/v1/public/GetStatesCountries2"
+API_EVENTS = f"{MAIN_SITE_BASE}/api/v1/Event/Events"
 
-# HEADERS are critical for bypassing 403 blocks.
-# This makes the script look like a standard Chrome browser on Windows.
+
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.5",
-    "Referer": "https://www.tfrrs.org/results_search.html",
-    "Origin": "https://www.tfrrs.org"
+    'User-Agent': "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+    'Accept': 'application/json, text/plain, */*',
+    'Content-Type': 'application/json',
+    'Origin': 'https://www.athletic.net',
 }
 
-async def fetch_season_meets(year, sport):
+async def fetch_season_meets(year):
     """
-    Iterates through all months of a given year/sport to find meet URLs.
-    
-    Args:
-        year (int): e.g., 2024
-        sport (str): 'track' or 'xc' (matches the form values in your doc)
-        
-    Returns:
-        set: A unique set of meet URLs found.
+    Entry point expected by main.py.
+    Orchestrates the fetching of meets for a given year and sport mode.
     """
+
+    # 2. Get Region List (We must query by state/region on Athletic.net)
+    print(f"Fetching regions for Athletic.net...")
+    regions = await _get_regions()
+    if not regions:
+        logging.error("Failed to retrieve regions. Aborting.")
+        return []
+
+    # 3. Create a client and scan all months
     found_urls = set()
     
-    # We iterate months to break the dataset down. 
-    # Even if there are >30 meets in a month, the pagination loop handles it.
-    # 1-12 covers the whole year (Indoor + Outdoor + XC)    
-    async with httpx.AsyncClient(headers=HEADERS, follow_redirects=True) as client:
-        months = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}
-        for month in months:
-            print(f"  > Scanning {sport} for {year}-{month:02d}...")
+    async with httpx.AsyncClient(headers=HEADERS, timeout=30.0) as client:
+        for month in range(1, 13):
+            print(f"  > Scanning Athletic.net for {year}-{month:02d} ...", end="")
             
-            page_num = 1
-            consecutive_failures = 0
+            # Create a task for every region for this specific month
+            tasks = []
+            for region in regions:
+                # Filter: Only scan US states and maybe Canada to save time? 
+                if region.get('CountryCode') == 'US': 
+                    tasks.append(
+                        _fetch_region_month(client, region, year, month)
+                    )
+            
+            # Run all states for this month in parallel
+            # We use return_exceptions=True to prevent one failed state from crashing the batch
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            # Harvest URLs from results
+            for res in results:
+                if isinstance(res, list):
+                    found_urls.update(res)
+            
+            # Small buffer between months
+            await asyncio.sleep(3)
 
-            while True:
-                # Construct params based on the form input names you provided
-                params = {
-                    "with_year": str(year),
-                    "with_month": str(month),
-                    "with_sports": sport, # 'track' or 'xc'
-                    "page": str(page_num) # Rails standard pagination param
-                }
-                
-                try:
-                    # 10s timeout to be polite but fail fast
-                    response = await client.get(SEARCH_URL, params=params, timeout=10.0)
-                    
-                    if response.status_code == 403:
-                        logging.error(f"403 Forbidden for {year}-{month} p{page_num}. Server blocked the request.")
-                        # If blocked, waiting briefly won't help if headers are wrong.
-                        # But if headers are right, it might be a rate limit.
-                        consecutive_failures += 1
-                        if consecutive_failures > 3:
-                            break # Move to next month
-                        await asyncio.sleep(5) # Long pause before retry
-                        continue
-
-                    if response.status_code != 200:
-                        logging.warning(f"Search failed for {year}-{month} p{page_num}: Status {response.status_code}")
-                        break
-
-                    new_urls = parse_search_results(response.text)
-                    
-                    if not new_urls:
-                        # Stop paging if no meets returned
-                        break
-                        
-                    found_urls.update(new_urls)
-                    
-                    # Reset failure count on success
-                    consecutive_failures = 0
-                    
-                    # Next page
-                    page_num += 1
-                    
-                    # Small sleep to be polite to the server during pagination loops
-                    await asyncio.sleep(0.5)
-
-                except httpx.RequestError as e:
-                    # This catches timeouts, connection drops, and protocol errors
-                    # This is likely where your '200 OK' crash was actually happening (incomplete body read)
-                    logging.error(f"Network Error for {year}-{month} p{page_num}: {type(e).__name__} - {e}")
-                    consecutive_failures += 1
-                    if consecutive_failures > 3:
-                        break
-                    await asyncio.sleep(2)
-                    continue
-                    
-                except Exception as e:
-                    # Catch-all for logic errors (e.g., parsing issues)
-                    # We use traceback to see the REAL error line
-                    logging.error(f"Unexpected Error fetching {year}-{month} p{page_num}: {e}")
-                    logging.error(traceback.format_exc())
-                    break
-
-    
+    print(f"Total meets found: {len(found_urls)}")
     return list(found_urls)
 
-def parse_search_results(html_content):
-    """
-    Parses the HTML table returned by the search page.
-    """
-    tree = html.fromstring(html_content)
-    urls = []
-    
-    # We look for links inside the results table.
-    # The form usually returns a table with class 'table' or similar.
-    # We target the 'Meet Name' column which is a link.
-    
-    # Xpath: Find any <a> tag containing 'results' in the href
-    # This avoids linking to team pages or other noise.
-    links = tree.xpath('//a[contains(@href, "/results/")]')
-    
-    for link in links:
-        href = link.get('href')
-        
-        # Filter out "xc" results if we are looking for track, or vice versa,
+async def _get_regions():
+    """Fetches list of valid states/countries from API."""
+    async with httpx.AsyncClient(headers=HEADERS) as client:
+        try:
+            resp = await client.get(API_REGIONS)
+            if resp.status_code == 200:
+                data = resp.json()
+                states = data.get('states')
+                
+                countries_data = data.get('countries', {})
+                countries_list = []
+                
+                for c_code, c_name in countries_data.items():
+                    countries_list.append({
+                        'CountryCode': c_code,  
+                        'Code': '',
+                        'Name': c_name
+                    })
+                
+                return states + countries_list
+            return []
+        except Exception as e:
+            logging.error(f"Region fetch failed: {e}")
+            return []
 
-        # just in case the filter didn't work perfectly (defensive coding).
-        # Also clean up the URL to be absolute.
-        if href.startswith("/"):
-            href = f"https://www.tfrrs.org{href}"
+async def _fetch_region_month(client, region, year, month):
+    """
+    Fetches events for a specific region and month.
+    Returns a list of Meet URLs.
+    """
+    # Calculate dates
+    start_date = date(year, month, 1)
+    last_day = calendar.monthrange(year, month)[1]
+    end_date = date(year, month, last_day)
+    
+    payload = {
+        "start": start_date.strftime("%Y-%m-%d"),
+        "end": end_date.strftime("%Y-%m-%d"),
+        "levelMask": 0,       
+        "sportMask": 0,
+        "country": region.get('CountryCode'),
+        "state": region.get('Code'),
+        "location": "",
+        "distanceKM": 0,
+        "filterTerm": ""
+    }
+
+    # We need a referer to look legitimate, though API often accepts without
+    headers_local = client.headers.copy()
+    headers_local['Referer'] = f"https://www.athletic.net/events/us/{region.get('Code')}/{year}-{month}-1"
+
+    try:
+        response = await client.post(API_EVENTS, json=payload, headers=headers_local)
+        
+        if response.status_code == 200:
+            data = response.json()
+            events = []
             
-        urls.append(href)
-    return urls
+            # API can return a dict with 'events' key or just a list
+            if isinstance(data, dict):
+                events = data.get('events', [])
+            elif isinstance(data, list):
+                events = data
+            
+            # Extract URLs
+            urls = []
+            for event in events:
+                # We construct the URL standard for Athletic.net
+                # IDMeet is the crucial key
+                meet_id = event.get('IDMeet')
+                if meet_id:
+                    urls.append(f"https://www.athletic.net/TrackAndField/meet/{meet_id}")
+            return urls
+            
+    except Exception as e:
+        # Lower log level to avoid spamming console on minor timeouts
+        logging.debug(f"Error fetching {region.get('Code')} {month}/{year}: {e}")
+    
+    return []
