@@ -8,34 +8,43 @@ class StandardResult:
     A standardized observation of a track/xc result.
     This decouples the parser from the database schema.
     """
-    # Meet Metadata
+    # --- 1. REQUIRED FIELDS (Must correspond to arguments passed without defaults) ---
     meet_name: str
     meet_url: str
-    date_start: Optional[date]
-    date_end: Optional[date]
-    venue_name: Optional[str]
-    venue_city: Optional[str]
-    venue_state: Optional[str]
-    venue_altitude: Optional[str] = 0 # if unknown, default to 0
     season: str # 'indoor', 'outdoor', 'xc'
-    facility_type: Optional[str] # '200 Banked', ' 200 Flat', '400', etc.
-
-    # Result Data
     event_name: str
     heat_number: int
-    heat_place: Optional[int] 
-    overall_place: Optional[int]
     athlete_name: str
-    athlete_id: str # custom ID we generate for the athlete (method TBD) (So we can have linkage between hs + college)
-    source_id: Optional[str] = None # Generic ID from the source (e.g., Athletic.net meet ID)
-    athlete_url_slug: Optional[str]
-    team_name: Optional[str]
-    team_slug: Optional[str]
     gender: str # 'M' or 'F'
-
-    
-    # Mark Data
     mark_raw: str
-    mark_seconds: Optional[float]
-    mark_metric: Optional[float]
+    source_id: str  # Generic ID (e.g. Athletic.net ID)
+
+
+    # --- 2. OPTIONAL FIELDS (Must have defaults, e.g. = None) ---
+    
+    # Meet Metadata
+    date_start: Optional[date] = None
+    date_end: Optional[date] = None
+    venue_name: Optional[str] = None
+    venue_city: Optional[str] = None
+    venue_state: Optional[str] = None
+    venue_altitude: float = 0.0  # Changed to float (was str)
+    facility_type: Optional[str] = None # '200 Banked', '200 Flat', etc.
+
+    # Result Data
+    heat_place: Optional[int] = None
+    overall_place: Optional[int] = None
+    
+    # IDs
+    # Note: athlete_id set to Optional because Parser yields None initially
+    athlete_id: Optional[str] = None 
+    
+    # Links
+    athlete_url_slug: Optional[str] = None
+    team_name: Optional[str] = None
+    team_slug: Optional[str] = None
+
+    # Mark Data
+    mark_seconds: Optional[float] = None
+    mark_metric: Optional[float] = None
     wind: float = 0.0

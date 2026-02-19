@@ -35,7 +35,6 @@ async def run_scraper(start_year, end_year):
             
             await asyncio.gather(*tasks)
             print(f"Completed {year}")
-
     await db.close()
 
 async def run_team_backfill():

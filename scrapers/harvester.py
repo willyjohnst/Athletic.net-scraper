@@ -35,7 +35,7 @@ async def fetch_season_meets(year):
     
     async with httpx.AsyncClient(headers=HEADERS, timeout=30.0) as client:
         for month in range(1, 13):
-            print(f"  > Scanning Athletic.net for {year}-{month:02d} ...", end="")
+            print(f"  > Scanning Athletic.net for {year}-{month:02d} ...")
             
             # Create a task for every region for this specific month
             tasks = []

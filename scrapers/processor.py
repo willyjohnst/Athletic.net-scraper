@@ -1,11 +1,9 @@
 import logging
-from scrapers.parser import AthleticNetParser # Import the CLASS, not the old function
+from scrapers.parser import AthleticNetParser
 
 async def process_single_meet(db, url_or_id):
-    # 1. Initialize Parser
     parser = AthleticNetParser()
     
-    # Extract ID from URL if full URL passed, or just use ID
     meet_id = url_or_id
     if "athletic.net" in str(url_or_id):
         # Extract ID logic here if needed, assuming generic ID passed for now
