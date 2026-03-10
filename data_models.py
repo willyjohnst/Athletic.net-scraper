@@ -28,6 +28,8 @@ class StandardResult:
     venue_name: Optional[str] = None
     venue_city: Optional[str] = None
     venue_state: Optional[str] = None
+    venue_lat: Optional[float] = None
+    venue_lon: Optional[float] = None
     venue_altitude: float = 0.0  # Changed to float (was str)
     facility_type: Optional[str] = None # '200 Banked', '200 Flat', etc.
 

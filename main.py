@@ -1,9 +1,10 @@
 import asyncio
 import logging
 import argparse
+from random import sample
+import re
 from scrapers.harvester import fetch_season_meets
 from scrapers.processor import process_single_meet
-from scrapers.team_scraper import TeamScraper
 from db_connection import Database
 
 logging.basicConfig(
@@ -23,31 +24,72 @@ async def run_scraper(start_year, end_year):
             print(f"--- Starting Scrape: {year} ---")
             
             # 1. Harvest
-            meet_urls = await fetch_season_meets(year)
-            print(f"Found {len(meet_urls)} meets.")
+            total_meets_found = await fetch_season_meets(year)
+            
+            already_scraped_urls = await db.get_scraped_meet_urls()
+
+            scraped_ids = set()
+            for url in already_scraped_urls:
+                match = re.search(r'/meet/(\d+)', str(url))
+                if match:
+                    scraped_ids.add(match.group(1))
+
+            # 3. Filter the incoming meets
+            meets_to_scrape = []
+            for meet_url in total_meets_found:
+                match = re.search(r'/meet/(\d+)', str(meet_url))
+                if match:
+                    meet_id = match.group(1)
+                    if meet_id not in scraped_ids:
+                        meets_to_scrape.append(meet_url)
+                else:
+                    meets_to_scrape.append(meet_url)
+            
+            print(f"Total meets found: {len(total_meets_found)}")
+            print(f"Already scraped: {len(scraped_ids)}")
+            print(f"Remaining to scrape: {len(meets_to_scrape)}")
+            
+            logging.info(f"Total meets found: {len(total_meets_found)}")
+            logging.info(f"Already scraped: {len(scraped_ids)}")
+            logging.info(f"Remaining to scrape: {len(meets_to_scrape)}")
             
             # 2. Process
-            sem = asyncio.Semaphore(2)
+            sem = asyncio.Semaphore(75)
             tasks = []
-            for url in meet_urls:
+            for url in meets_to_scrape:
                 task = asyncio.create_task(bounded_process(sem, db, url))
                 tasks.append(task)
             
             await asyncio.gather(*tasks)
             print(f"Completed {year}")
+            logging.info(f"Completed {year}")
     await db.close()
 
-async def run_team_backfill():
-    """Runs the specialized Team Scraper."""
-    print("--- Starting Team Info Backfill ---")
+async def run_athlete_backfill():
+    print("--- Starting Athlete Info Backfill ---")
     db = Database()
     await db.connect()
-    
-    scraper = TeamScraper(db)
-    await scraper.backfill_teams()
+    from scrapers.athlete_processor import process_single_athlete
+    athletes = await db.get_athlete_subset(sample_rate=100) 
+        
+    sem = asyncio.Semaphore(2)
+
+    async def safe_process(record):
+        async with sem: 
+            a_internal_id = record['internal_id']
+            anet_id = record['athletic_net_id']        
+            await process_single_athlete(db, a_internal_id, anet_id)
+
+    tasks = []
+    for athlete_record in athletes:
+        
+        task = asyncio.create_task(safe_process(athlete_record))
+        tasks.append(task)
+    await asyncio.gather(*tasks)
     
     await db.close()
-    print("--- Team Backfill Complete ---")
+    print("--- Athlete Backfill Complete ---")
+    logging.info(f"Athlete Backfill Complete")
 
 async def bounded_process(sem, db, url):
     async with sem:
@@ -59,14 +101,13 @@ async def bounded_process(sem, db, url):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="TFRRS Scraper")
-    parser.add_argument("--start", type=int, default=2024, help="Start Year")
-    parser.add_argument("--end", type=int, default=2024, help="End Year")
-    parser.add_argument("--teams", action="store_true", help="Run Team Info Backfill ONLY")
+    parser.add_argument("--start", type=int, default=2026, help="Start Year")
+    parser.add_argument("--end", type=int, default=2026, help="End Year")
+    parser.add_argument("--athletes", type=bool, default=True, help="Run Athlete Profile Scraper") 
     
     args = parser.parse_args()
     
-    if args.teams:
-        asyncio.run(run_team_backfill())
-
+    if args.athletes:
+        asyncio.run(run_athlete_backfill())
     else:
         asyncio.run(run_scraper(args.start, args.end))

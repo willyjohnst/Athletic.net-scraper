@@ -44,7 +44,7 @@ class AthleticNetParser:
     def __init__(self):
         self.logger = logging.getLogger("AthleticNetParser")
 
-    async def fetch_meet_results(self, meet_id: str, season_hint: str = "tf"):
+    async def fetch_meet_results(self, meet_id: str, season_hint: str):
         self.logger.info(f"Fetching Meet {meet_id}...")
         sport_code = "xc" if season_hint == "xc" else "tf"
         
@@ -129,7 +129,10 @@ class AthleticNetParser:
                         venue_name=venue_name,
                         venue_city=venue_city,
                         venue_state=venue_state,
-                        facility_type=None,
+                        venue_lat = loc_info.get('Lat'),
+                        venue_lon = loc_info.get('Long'),
+                        venue_altitude = await self._fetch_altitude(client, loc_info.get('Lat'), loc_info.get('Long')),
+                        facility_type = self._parse_facility_type(sport_code, loc_info, m_info.get('Name', 'Unknown Meet')),
                         
                         # Event
                         event_name=full_event_name,
@@ -159,7 +162,6 @@ class AthleticNetParser:
             self.logger.info(f"Finished Meet {meet_id}. Parsed {len(final_results)} results.")
             return final_results
 
-    # --- HELPERS ---
 
     def _parse_api_date(self, date_str):
         if not date_str: return None
@@ -200,6 +202,28 @@ class AthleticNetParser:
             
         return data
 
+    async def _fetch_altitude(self, client, lat, lon):
+        """
+        Fetches altitude in meters using Open-Meteo's free elevation API.
+        """
+        if not lat or not lon:
+            return 0.0
+            
+        url = f"https://api.open-meteo.com/v1/elevation?latitude={lat}&longitude={lon}"
+        
+        try:
+            # We use the existing client but don't need the Athletic.net specific headers
+            resp = await client.get(url, timeout=5.0)
+            if resp.status_code == 200:
+                data = resp.json()
+                elevation_list = data.get('elevation')
+                if elevation_list and len(elevation_list) > 0:
+                    return float(elevation_list[0])
+        except Exception as e:
+            pass
+            
+        return 0.0 # Default to sea level if the API fails
+
     def _convert_to_seconds(self, mark_str):
         if not mark_str: return None
         try:
@@ -208,3 +232,50 @@ class AthleticNetParser:
             elif len(parts) == 2: return float(parts[0]) * 60 + float(parts[1])
         except: return None
         return None
+
+    def _parse_facility_type(self, sport_code, loc_info, meet_name):
+        """
+        Hybrid facility parser. Tries API first, falls back to text analysis.
+        """
+        if sport_code == 'xc':
+            return "XC Course"
+            
+        # --- 1. Try Explicit API Fields ---
+        track_length = loc_info.get('TrackLength')
+        track_type = loc_info.get('TrackType') 
+        is_indoor = loc_info.get('Indoor')
+
+        # If API gives us pristine data, use it immediately
+        if is_indoor and track_length and track_type:
+            return f"{track_length}m {track_type.capitalize()}"
+
+        # --- 2. Fallback: Text Analysis ---
+        venue_name = loc_info.get('Name', '')
+        search_text = f"{venue_name} {meet_name}".lower()
+
+        # Flag indoors based on keywords or API flag
+        indoor_flag = is_indoor or any(w in search_text for w in ['indoor', 'dome', 'fieldhouse', 'complex'])
+
+        # Regex to find numbers like 200m, 300 meters, 180m
+        size_match = re.search(r'\b(1[5-9]\d|2\d\d|3\d\d|400)\s*(?:m|meter|meters)\b', search_text)
+        size = int(size_match.group(1)) if size_match else track_length
+
+        if indoor_flag or (size and size < 400):
+            parts = []
+            if size:
+                parts.append(f"{size}m")
+
+            # Apply your specific logic
+            if 'banked' in search_text:
+                parts.append("Banked")
+            elif 'flat' in search_text:
+                parts.append("Flat")
+            elif 'oversized' in search_text or (size and 200 < size < 400):
+                parts.append("Oversized")
+            # If size is exactly 200 and no words found, it remains just "200m" (Banked/Flat unknown)
+
+            if parts:
+                return " ".join(parts)
+            return "Indoor Track" # Generic fallback
+
+        return "Outdoor Track"

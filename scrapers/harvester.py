@@ -58,7 +58,6 @@ async def fetch_season_meets(year):
             # Small buffer between months
             await asyncio.sleep(3)
 
-    print(f"Total meets found: {len(found_urls)}")
     return list(found_urls)
 
 async def _get_regions():
