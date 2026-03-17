@@ -28,7 +28,6 @@ class AthleteParser:
         request_headers["anet-site-roles-token"] = request_headers["anet-site-roles-token"].strip()
         
         tf_url = f"https://www.athletic.net/api/v1/AthleteBio/GetAthleteBioData?athleteId={clean_id}&sport=tf&level=0"
-        xc_url = f"https://www.athletic.net/api/v1/AthleteBio/GetAthleteBioData?athleteId={clean_id}&sport=xc&level=0"
         
         payload = {"tf": {}, "xc": {}}
         
@@ -40,17 +39,11 @@ class AthleteParser:
                     payload["tf"] = tf_resp.json()
                 elif tf_resp.status_code == 403:
                     self.logger.error(f"TF 403 Forbidden for {clean_id}")
+                    asyncio.sleep(15)
                 
                 # 3. MICRO-DELAY: Prevent firing two requests in the exact same millisecond
                 await asyncio.sleep(random.uniform(1, 5))
-                
-                # 4. Fetch XC
-                xc_resp = await client.get(xc_url)
-                if xc_resp.status_code == 200:
-                    payload["xc"] = xc_resp.json()
-                elif xc_resp.status_code == 403:
-                    self.logger.error(f"XC 403 Forbidden for {clean_id}")
-                    
+                                    
                 return payload
             except Exception as e:
                 self.logger.error(f"Network error fetching {athlete_id}: {e}")

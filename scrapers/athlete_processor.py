@@ -15,14 +15,12 @@ async def process_single_athlete(db, internal_id, athletic_net_id):
     if not full_payload: return
 
     tf_data = full_payload.get('tf', {})
-    xc_data = full_payload.get('xc', {})
 
     # --- 1. RUN YOUR EXISTING TIMELINE LOGIC ---
     grades_tf = tf_data.get('grades', {})
-    grades_xc = xc_data.get('grades', {})
 
     # FIX: Use colons to create a proper dictionary
-    grades_dict = {'xc': grades_xc, 'tf': grades_tf}
+    grades_dict = {'tf': grades_tf}
         
     # --- 1. NORMALIZE SEASONS INTO ACADEMIC YEARS ---
     academic_years = {}
@@ -30,18 +28,6 @@ async def process_single_athlete(db, internal_id, athletic_net_id):
     def init_ay(ay):
         if ay not in academic_years:
             academic_years[ay] = {'grade': 0, 'xc': False, 'indoor': False, 'outdoor': False, 'teams': set()}
-
-    # Parse XC (Fall) -> Shift year + 1 to align with Spring Academic Year
-    for key, grade_val in grades_dict.get('xc', {}).items():
-        if grade_val >= 400 or grade_val in (0, 99): continue
-        parts = key.split('_')
-        if len(parts) != 2: continue
-        
-        ay = int(parts[1]) + 1
-        init_ay(ay)
-        academic_years[ay]['grade'] = max(academic_years[ay]['grade'], grade_val)
-        academic_years[ay]['xc'] = True
-        if int(parts[0]) != 0: academic_years[ay]['teams'].add(int(parts[0]))
 
     # Parse TF (Winter/Spring)
     for key, grade_val in grades_dict.get('tf', {}).items():
@@ -72,84 +58,111 @@ async def process_single_athlete(db, internal_id, athletic_net_id):
     }
     
     sorted_years = sorted(academic_years.keys())
-    previous_ay = None
-    previous_grade = None
     all_college_teams = set()
     
-    # --- 3. THE ELIGIBILITY ENGINE ---
+    inferred_hs_starts = []
+    inferred_hs_ends = []
+    inferred_col_starts = []
+    max_col_year = None
+    max_col_grade = 0
+    
+    previous_ay = None
+    previous_grade = None
+
+    # --- 3. THE ELIGIBILITY ENGINE (Base Pass) ---
     for ay in sorted_years:
         data = academic_years[ay]
         g = data['grade']
         
-        # High School (9-12)
+        # 3a. Gather High School Inferences
         if 9 <= g <= 12:
-            if not timeline["hs_start"] or g == 9: timeline["hs_start"] = ay
-            if not timeline["hs_end"] or ay > timeline["hs_end"]: timeline['hs_end'] = ay
-            if g == 12: timeline["hs_grad"] = True
-            timeline["current_level"] = "HS"
+            inferred_hs_starts.append(ay - (g - 9))
+            inferred_hs_ends.append(ay + (12 - g))
             
-        # College (21-25)
+        # 3b. Gather College Inferences
         elif 21 <= g <= 25:
-            if not timeline["col_start"] or g == 21: timeline["col_start"] = ay
-            if not timeline["col_end"] or g < timeline["col_end"]: timeline["col_end"] = ay
-            if g >= 24: timeline["col_grad"] = True
-            timeline["current_level"] = "College"
+            inferred_col_starts.append(ay - (g - 21))
+            if max_col_year is None or ay > max_col_year: 
+                max_col_year = ay
+            max_col_grade = max(max_col_grade, g)
             all_college_teams.update(data['teams'])
             
-            # Specific Redshirt Detection
-            if not data['xc']: timeline["rs_xc"] = True
             if not data['indoor']: timeline["rs_indoor"] = True
             if not data['outdoor']: timeline["rs_outdoor"] = True
             
-            # Outlier Detection
-            if previous_ay:
-                if (ay - previous_ay > 1):
-                    timeline["has_gap_year"] = True
-                    timeline["rs_xc"] = True
-                    timeline["rs_indoor"] = True
-                    timeline["rs_outdoor"] = True
-                    
-                if (g == previous_grade) and (ay - previous_ay == 1):
-                    if ay == 2021: 
-                        timeline["covid_years"] += 1
-                        
+        # 3c. Internal Gap Year / Covid Detection
+        if previous_ay:
+            if ay - previous_ay > 1:
+                timeline["has_gap_year"] = True
+            if g == previous_grade and (ay - previous_ay == 1):
+                # Grade didn't change but the year advanced
+                if ay in (2021, 2022): 
+                    timeline["covid_years"] += 1
+
         previous_ay = ay
         previous_grade = g
 
+    # --- 4. LOGICAL INFERENCES & BACK-CALCULATIONS ---
+    
+    # Apply HS timelines (taking the earliest start / latest end if data fluctuates)
+    if inferred_hs_starts:
+        timeline["hs_start"] = min(inferred_hs_starts)
+        timeline["hs_end"] = max(inferred_hs_ends)
+
+    # Apply College timelines
+    if inferred_col_starts:
+        timeline["col_start"] = min(inferred_col_starts)
+        # Expected graduation is typically 4 years (start + 3), but adjust if they stayed longer
+        timeline["col_end"] = max(timeline["col_start"] + 3, max_col_year)
+
+    # Back-calculate missing HS info if they are in college
+    if timeline["col_start"]:
+        timeline["hs_grad"] = True # Must have graduated HS to be in college
+        if not timeline["hs_start"] or not timeline["hs_end"]:
+            # Standard assumption: HS ends the spring before college starts
+            timeline["hs_end"] = timeline["col_start"] - 1
+            timeline["hs_start"] = timeline["hs_end"] - 3
+            
+    # Explicit Gap Year Check (Between HS and College)
+    if timeline["hs_end"] and timeline["col_start"]:
+        # Standard track: HS end 2020 -> Col Start 2021 (Difference of 1)
+        if (timeline["col_start"] - timeline["hs_end"]) > 1:
+            timeline["has_gap_year"] = True
+
+    # Check Transfers
     if len(all_college_teams) > 1:
         timeline["is_transfer"] = True
-        
-    # --- 3b. SPRINTER / THROWER CORRECTION ---
-    college_xc_seasons = sum(
-        1 for ay, data in academic_years.items() 
-        if 21 <= data['grade'] <= 25 and data['xc']
-    )
-    
-    if college_xc_seasons == 0:
-        timeline["rs_xc"] = False
-                
-    # --- 4. BACK-CALCULATE "UNKNOWN" YEARS ---
-    if timeline["col_start"] and not timeline["hs_grad"]:
-        timeline["hs_end"] = timeline["col_start"] - 1
-        timeline["hs_grad"] = True
-        timeline["hs_start"] = timeline["hs_end"] - 3 
 
+    # --- 4c. CURRENT LEVEL & GRADUATION STATUS (Anchor: 2026) ---
+    current_year = 2026 
+    
+    if timeline["hs_end"] and current_year > timeline["hs_end"]:
+        timeline["hs_grad"] = True
+        
+    if (timeline["col_end"] and current_year > timeline["col_end"]) or max_col_grade >= 24:
+        timeline["col_grad"] = True
+
+    # Assign Current Level hierarchically
+    if timeline["col_start"] and not timeline["col_grad"]:
+        timeline["current_level"] = "College"
+    elif timeline["hs_start"] and not timeline["hs_grad"]:
+        timeline["current_level"] = "HS"
+    elif timeline["col_grad"]:
+        timeline["current_level"] = "Post-Collegiate"
+    elif timeline["hs_grad"] and not timeline["col_start"]:
+        timeline["current_level"] = "Post-HS"
 
 
     # --- 5. EXTRACT MEETS & EVENTS ---
     meets_dict = tf_data.get("meets", {})
-    meets_dict.update(xc_data.get("meets", {}))
 
     events_dict = {}
     for e in tf_data.get("eventsTF", []) or []:
-        events_dict[str(e["IDEvent"])] = e["Event"]
-    for e in xc_data.get("eventsXC", []) or []:
         events_dict[str(e["IDEvent"])] = e["Event"]
 
     # --- 6. COMBINE ALL RESULTS ---
     all_results = []
     if tf_data.get("resultsTF"): all_results.extend(tf_data["resultsTF"])
-    if xc_data.get("resultsXC"): all_results.extend(xc_data["resultsXC"])
 
     clean_performances = []
 

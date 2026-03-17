@@ -1,0 +1,117 @@
+CREATE TABLE sources (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(100) UNIQUE NOT NULL, -- e.g., 'tfrrs', 'athletic_net'
+    base_url VARCHAR(255),
+    trust_level INTEGER DEFAULT 1
+);
+
+-- ==========================================
+-- 2. IDENTITY LAYER (HUB & SPOKE)
+-- ==========================================
+
+CREATE TABLE athletes (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    display_name VARCHAR(255) NOT NULL,
+    gender VARCHAR(1), -- 'M' or 'F'
+    grad_year INTEGER
+);
+
+CREATE TABLE athlete_aliases (
+    id SERIAL PRIMARY KEY,
+    athlete_id UUID NOT NULL REFERENCES athletes(id) ON DELETE CASCADE,
+    source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    external_id VARCHAR(100) NOT NULL, -- The ID from Athletic.net or TFRRS
+    external_name VARCHAR(255),
+    url_slug VARCHAR(255),
+    
+    -- Prevents storing the same Athletic.net ID twice
+    CONSTRAINT _source_athlete_uc UNIQUE (source_id, external_id)
+);
+
+CREATE TABLE teams (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(255) NOT NULL,
+    classification VARCHAR(50) -- 'HS', 'College', 'Pro', 'Unattached'
+);
+
+CREATE TABLE team_aliases (
+    id SERIAL PRIMARY KEY,
+    team_id UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    external_id VARCHAR(100) NOT NULL,
+    external_name VARCHAR(255),
+    
+    CONSTRAINT _source_team_uc UNIQUE (source_id, external_id)
+);
+
+-- ==========================================
+-- 3. EVENT DATA LAYER
+-- ==========================================
+
+CREATE TABLE meets (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    url VARCHAR(500),
+    date_start DATE,
+    date_end DATE,
+    season VARCHAR(50), -- 'indoor', 'outdoor', 'xc'
+    
+    venue_name VARCHAR(255),
+    venue_city VARCHAR(100),
+    venue_state VARCHAR(50),
+    venue_altitude NUMERIC(8, 2) DEFAULT 0.0,
+    facility_type VARCHAR(100),
+    
+    importance_tier INTEGER DEFAULT 1
+);
+
+CREATE TABLE standard_events (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(100) UNIQUE NOT NULL, -- e.g., '100m', 'Shot Put'
+    distance_meters NUMERIC(10, 2),
+    is_field BOOLEAN DEFAULT FALSE,
+    is_relay BOOLEAN DEFAULT FALSE
+);
+
+CREATE TABLE races (
+    id SERIAL PRIMARY KEY,
+    meet_id INTEGER NOT NULL REFERENCES meets(id) ON DELETE CASCADE,
+    standard_event_id INTEGER REFERENCES standard_events(id) ON DELETE SET NULL,
+    
+    name_raw VARCHAR(255) NOT NULL, -- The original scraped name
+    gender VARCHAR(1),
+    round VARCHAR(50), -- 'Prelims', 'Finals'
+    heat_number INTEGER DEFAULT 1,
+    wind NUMERIC(5, 2) DEFAULT 0.0
+);
+
+CREATE TABLE performances (
+    id SERIAL PRIMARY KEY,
+    race_id INTEGER NOT NULL REFERENCES races(id) ON DELETE CASCADE,
+    athlete_id UUID NOT NULL REFERENCES athletes(id) ON DELETE CASCADE,
+    team_id UUID REFERENCES teams(id) ON DELETE SET NULL,
+    
+    mark_raw VARCHAR(50) NOT NULL, -- The unedited string, e.g., "4:01.23" or "39'9"
+    
+    -- Using NUMERIC instead of FLOAT is critical in PostgreSQL to prevent 
+    -- floating point math errors when aggregating/averaging track times
+    mark_seconds NUMERIC(10, 3), 
+    mark_metric NUMERIC(10, 3),
+    
+    overall_place INTEGER,
+    heat_place INTEGER
+);
+
+-- ==========================================
+-- 4. PERFORMANCE INDEXES
+-- ==========================================
+-- PostgreSQL automatically indexes Primary Keys and Unique constraints,
+-- but you must manually index Foreign Keys to keep JOINs fast.
+
+CREATE INDEX idx_athlete_aliases_athlete_id ON athlete_aliases(athlete_id);
+CREATE INDEX idx_team_aliases_team_id ON team_aliases(team_id);
+CREATE INDEX idx_races_meet_id ON races(meet_id);
+CREATE INDEX idx_races_standard_event_id ON races(standard_event_id);
+CREATE INDEX idx_performances_race_id ON performances(race_id);
+CREATE INDEX idx_performances_athlete_id ON performances(athlete_id);
+CREATE INDEX idx_performances_team_id ON performances(team_id);

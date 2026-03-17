@@ -173,7 +173,7 @@ class Database:
         
         return athlete_id
 
-    async def get_athlete_subset(self, sample_rate=100):
+    async def get_athlete_subset(self):
         """
         Uses an Aggressive Whitelist CTE to guarantee collegiate athletes.
         """
@@ -191,33 +191,11 @@ class Database:
                 WHERE s.name = 'athletic_net'
                   AND al.external_id IS NOT NULL
                   
-                  -- 1. THE COLLEGE WHITELIST
-                  AND (
-                      t.name ILIKE '%University%' OR 
-                      t.name ILIKE '%College%' OR 
-                      t.name ILIKE '% State%' OR 
-                      t.name ILIKE '% Tech' OR
-                      t.name ILIKE '%A&M%' OR
-                      t.name ILIKE 'UC %'
-                  )
-                  
-                  -- 2. THE IMPOSTER BLACKLIST (e.g., "University High School")
-                  AND t.name NOT ILIKE '%High School%' 
-                  AND t.name NOT ILIKE '% HS%' 
-                  AND t.name NOT ILIKE '%Middle%'
-                  AND t.name NOT ILIKE '% MS%'
-                  AND t.name NOT ILIKE '%Prep%'
-                  AND t.name NOT ILIKE '%Academy%'
-                  AND t.name NOT ILIKE '%Track Club%'
-                  AND t.name NOT ILIKE '% TC'
-                  
                 GROUP BY a.id, al.external_id
                 HAVING COUNT(p.id) >= 4
             )
             SELECT internal_id, athletic_net_id
             FROM TargetAthletes
-            ORDER BY internal_id
-            LIMIT 2000;
         """
         records = await self.pool.fetch(sql)
         return [dict(r) for r in records]

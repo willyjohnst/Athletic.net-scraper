@@ -70,9 +70,9 @@ async def run_athlete_backfill():
     db = Database()
     await db.connect()
     from scrapers.athlete_processor import process_single_athlete
-    athletes = await db.get_athlete_subset(sample_rate=100) 
-        
-    sem = asyncio.Semaphore(2)
+    athletes = await db.get_athlete_subset() 
+    
+    sem = asyncio.Semaphore(5)
 
     async def safe_process(record):
         async with sem: 
