@@ -101,9 +101,10 @@ async def bounded_process(sem, db, url):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="TFRRS Scraper")
-    parser.add_argument("--start", type=int, default=2026, help="Start Year")
+    parser.add_argument("--start", type=int, default=2021, help="Start Year")
     parser.add_argument("--end", type=int, default=2026, help="End Year")
-    parser.add_argument("--athletes", type=bool, default=True, help="Run Athlete Profile Scraper") 
+    # change default to True to get athletes only
+    parser.add_argument("--athletes", type=bool, default=False, help="Run Athlete Profile Scraper") 
     
     args = parser.parse_args()
     
