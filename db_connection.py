@@ -39,10 +39,6 @@ class Database:
         if self.pool:
             await self.pool.close()
 
-    # ==========================================
-    # 1. SOURCES & VENUES
-    # ==========================================
-
     async def get_source_id(self, source_name):
         """Helper to get the ID of a source, creating it if it doesn't exist."""
         sql = "SELECT id FROM sources WHERE name = $1"
@@ -118,10 +114,6 @@ class Database:
             meet_info.get('facility_type'), 
             meet_info.get('altitude')
         )
-
-    # ==========================================
-    # 2. IDENTITY LAYER (TEAMS & ATHLETES)
-    # ==========================================
 
     async def get_or_create_team(self, name, external_id, source_name="athletic_net"):
         if not name: return None
@@ -250,10 +242,6 @@ class Database:
         except Exception as e:
             self.logger.error(f"Failed to save timeline for {athlete_id}: {e}")
 
-    # ==========================================
-    # 3. EVENT DATA LAYER (RACES & PERFORMANCES)
-    # ==========================================
-
     async def get_or_create_race_context(self, meet_id, event_name, round_name, heat, gender, wind):
         # Look for an existing race context
         check_sql = """
@@ -321,3 +309,18 @@ class Database:
             records = await self.pool.fetch(sql)
             # Return as a set comprehension for instant 'in' checks
             return {record['url'] for record in records}
+
+
+    # Data cleaning functions
+    async def get_performance_times(self, lower_bound=0.00, upper_bound=3600.00, limit=100):
+            """
+            Returns a limited number of performances.
+            """
+            sql = """SELECT mark_raw, mark_seconds 
+            FROM performances 
+            WHERE mark_seconds >= $1 
+            AND mark_seconds <= $2
+            LIMIT $3"""
+
+            return await self.pool.fetch(sql, lower_bound, upper_bound, limit)
+

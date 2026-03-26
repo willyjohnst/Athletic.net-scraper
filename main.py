@@ -1,8 +1,8 @@
 import asyncio
 import logging
 import argparse
-from random import sample
 import re
+from cleaning.audit_parser import *
 from scrapers.harvester import fetch_season_meets
 from scrapers.processor import process_single_meet
 from db_connection import Database
@@ -99,16 +99,20 @@ async def bounded_process(sem, db, url):
             logging.error(f"Failed to process {url}: {e}")
             print(f"X Failed: {url}")
 
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="TFRRS Scraper")
     parser.add_argument("--start", type=int, default=2021, help="Start Year")
     parser.add_argument("--end", type=int, default=2026, help="End Year")
-    # change default to True to get athletes only
     parser.add_argument("--athletes", type=bool, default=False, help="Run Athlete Profile Scraper") 
+    parser.add_argument("--parser_audit", type=int, default=1, help="Call with an integer value for each parser audit function")
     
     args = parser.parse_args()
     
     if args.athletes:
         asyncio.run(run_athlete_backfill())
+    elif args.parser_audit:
+        if args.parser_audit == 1:
+            asyncio.run(performance_time_audit())
     else:
         asyncio.run(run_scraper(args.start, args.end))
