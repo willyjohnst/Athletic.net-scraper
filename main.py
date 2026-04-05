@@ -105,14 +105,18 @@ if __name__ == "__main__":
     parser.add_argument("--start", type=int, default=2021, help="Start Year")
     parser.add_argument("--end", type=int, default=2026, help="End Year")
     parser.add_argument("--athletes", type=bool, default=False, help="Run Athlete Profile Scraper") 
-    parser.add_argument("--parser_audit", type=int, default=1, help="Call with an integer value for each parser audit function")
+    parser.add_argument("--audit", type=int, default=1, help="Call with an integer value for each parser audit function")
     
     args = parser.parse_args()
     
     if args.athletes:
         asyncio.run(run_athlete_backfill())
-    elif args.parser_audit:
-        if args.parser_audit == 1:
-            asyncio.run(performance_time_audit())
+    elif args.audit:
+        if args.audit == 1:
+            asyncio.run(audit_seconds_conversions())
+        if args.audit == 2:
+            asyncio.run(standardize_event_names(dry_run=True))
+        if args.audit == 3:
+            asyncio.run(standardize_event_names(dry_run=False))
     else:
         asyncio.run(run_scraper(args.start, args.end))

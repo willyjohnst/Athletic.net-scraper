@@ -242,6 +242,7 @@ class Database:
         except Exception as e:
             self.logger.error(f"Failed to save timeline for {athlete_id}: {e}")
 
+    # TODO: ADD standard_event_id here
     async def get_or_create_race_context(self, meet_id, event_name, round_name, heat, gender, wind):
         # Look for an existing race context
         check_sql = """
@@ -323,4 +324,25 @@ class Database:
             LIMIT $3"""
 
             return await self.pool.fetch(sql, lower_bound, upper_bound, limit)
+
+    async def get_audit_query(self, sql):
+        return await self.pool.fetch(sql)
+
+    async def get_unstandardized_events(self):
+        """
+        Returns the full list of races without a standard_event_id
+        """
+        sql = """SELECT id, name_raw 
+        FROM races
+        WHERE standard_event_id IS NULL
+        """
+        return await self.pool.fetch(sql)
+
+    async def update_races_standard_event_id(self, race_id, standard_event_id):
+        """
+        Updates the standard_event_id column in races
+        """
+        sql = "UPDATE races SET standard_event_id = $1 WHERE id = $2"
+        return await self.pool.execute(sql, standard_event_id, race_id)
+
 
