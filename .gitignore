@@ -14,3 +14,6 @@
 /scrapers/xc_parser.py
 /scrapers/track_parser.py
 /documents
+/__pycache__
+/cleaning/__pycache__
+/scrapers/__pycache__
