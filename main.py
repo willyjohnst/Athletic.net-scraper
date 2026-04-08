@@ -2,6 +2,7 @@ import asyncio
 import logging
 import argparse
 import re
+from cleaning.standardize_races import *
 from cleaning.audit_parser import *
 from scrapers.harvester import fetch_season_meets
 from scrapers.processor import process_single_meet
